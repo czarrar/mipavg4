@@ -1,0 +1,98 @@
+function [cfg] = read_sgc(SGCfiles, fidLOG)
+
+% SGCfiles = { '/mnt/nfs/share/aengell/abscreen01_erp.sgc' };
+
+sgc_version = 'sgc_v3.0';
+nSGCfiles = length(SGCfiles);
+
+%% Loop for SGC files: First make sure each exists, extract critical information, test epoch limits
+
+epoch_limits = cell(nSGCfiles,1);   % onset/offset in ms of epoch
+base_limits = cell(nSGCfiles,1);    % onset/offset in ms of baseline window
+nBinsSGC = zeros(nSGCfiles,1);      % number of codes
+codesSGC = cell(nSGCfiles,1);       % 2 columns with code and recode
+labelsSGC = cell(nSGCfiles,1);      % the label associated with each recode
+
+for j = 1:nSGCfiles
+    if(~exist(SGCfiles{j}, 'file'))
+        fprintf('\n SGC file does not exist --> %s\n', cfg.files.sgc{j});
+        error('Program cannot proceed');
+    else
+        fid = fopen(SGCfiles{j});
+        version = strtrim(fscanf(fid,'%s',1));
+        if(~strcmpi(version, sgc_version))
+            fprintf('\n SGC file is not current version\n');
+            error('Program cannot proceed');
+        end
+        epoch = fscanf(fid,'%d%d',2);
+        base  = fscanf(fid,'%d%d',2);
+        first_pt_msec = fscanf(fid,'%d',1);
+        nBinsSGC(j) = fscanf(fid,'%d',1);
+        codes = fscanf(fid,'%d%d\n',[2,nBinsSGC(j)])';
+        [labels,labelsCount] = getstrs(fid);
+        labels = deblank(labels);
+        for k = labelsCount:-1:1
+            if(isempty(labels{k}))
+                labels(k) = [];
+            else
+                break;
+            end
+        end
+        epoch_limits{j} = epoch; base_limits{j} = base; 
+        codesSGC{j} = codes; labelsSGC{j} = labels;
+    end
+    fclose(fid);
+end
+
+clear epoch base codes labels;
+
+% Make sure that the epoch limits are the same in all SGC files specified
+
+fprintf(fidLOG,'\n SGC files specified:\n');
+for j = 1:nSGCfiles
+    fprintf(fidLOG,' %s\n', cfg.files.sgc{j});
+end
+if(length(unique(cat(1,epoch_limits{:}))) ~= 2)
+    fprintf('\nAn inconsistency was detected in the epoch limits within the SGC files\n');
+    error('Program cannot proceed');
+end
+
+msecpt = 1000/cfg.eeg.freq(1);
+epoch_ms = epoch_limits{1};
+base_ms = base_limits{1};
+epoch_pts(1) = round(epoch_ms(1) / msecpt);
+epoch_pts(2) = round(epoch_ms(2) / msecpt);
+base_pts(1) = round(base_ms(1) / msecpt);
+base_pts(2) = round(base_ms(2) / msecpt);
+npts = epoch_pts(2) - epoch_pts(1) + 1;
+
+fprintf(fidLOG,'\nSegmentation Control File\n\nThe designated epoch is specified relative to the stimulus code\n');
+fprintf(fidLOG,'Epoch begin and end (msec): %d %d\n',epoch_ms(1),epoch_ms(2));
+fprintf(fidLOG,'Epoch begin and end (pts) : %d %d\n',epoch_pts(1),epoch_pts(2));
+fprintf(fidLOG,'Number of points in epoch : %d\n',npts);
+fprintf(fidLOG,'\nBaseline epoch specified relative to the stimulus code\n');
+fprintf(fidLOG,'\nBase begin and end (msec) : %d %d\n',base_ms(1),base_ms(2));
+fprintf(fidLOG,'Base begin and end (pts)  : %d %d\n',base_pts(1),base_pts(2));
+
+if(epoch_pts(1) >= epoch_pts(2) || base_pts(1) >= base_pts(2) || base_pts(1) < epoch_pts(1) || base_pts(2) > epoch_pts(2))
+    fprintf(fidLOG,'\nInconsistency in designated epochs - program cannot continue\n');
+    fclose('all');
+    error('Inconsistency in designated epochs - program cannot continue');
+end
+base_ms(1) = base_ms(1) - epoch_ms(1);
+base_ms(2) = base_ms(2) - epoch_ms(1);
+base_pts(1) = base_pts(1) - epoch_pts(1) + 1;
+base_pts(2) = base_pts(2) - epoch_pts(1) + 1;
+fprintf(fidLOG,'\nBaseline epoch specified relative to the designated epoch\n');
+fprintf(fidLOG,'\nBase begin and end (msec) : %d %d\n',base_ms(1),base_ms(2));
+fprintf(fidLOG,'Base begin and end (pts)  : %d %d\n',base_pts(1),base_pts(2));
+
+% Save variables
+cfg.sgc.nBinsSGC = nBinsSGC;
+cfg.sgc.codesSGC = codesSGC; cfg.sgc.labelsSGC = labelsSGC;
+cfg.sgc.msecpt = msecpt;
+cfg.sgc.epoch_pts = epoch_pts; cfg.sgc.epoch_ms = epoch_ms;
+cfg.sgc.base_pts = base_pts; cfg.sgc.base_ms = base_ms;
+
+
+end
