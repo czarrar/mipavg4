@@ -1,5 +1,7 @@
 function mipavgx(varargin)
 
+basepath = '/usr/local/packages/MATLABPackages';
+
 %%==============================================================================
 %%                                              Initialize file and option flags
 %%==============================================================================
@@ -10,12 +12,13 @@ nOUTprefixes = 0; nARFfiles = 0; nRCDfiles = 0;
 EEGfiles = {}; SGCfiles = {}; RCDfiles = {};
 OUTprefix = []; ARFfile = [];
 
-lowpass_value = 0; highpass_value = 0; notchfilter_option = 0;
-typeEEG = 0; typeCNT = 0; typeSET = 0; verbose = 0;
-
+typeEEG = 0; typeCNT = 0; typeSET = 0; 
 output = []; output_opts = {'eegad', 'eeglab', 'fieldtrip', 'econnectome', ...
                             'continuous_eeglab', 'continuous_fieldtrip'};
 for i=1:length(output_opts); output.(output_opts{i}) = 0; end
+
+lowpass_value = 0; highpass_value = 0; notchfilter_option = 0;
+refchannel = 0; verbose = 0;
 
 conversion_factor = 0; adunitsPerUvolt = 1;
 
@@ -59,25 +62,28 @@ for j = 1:length(varargin)
     elseif(strfind(arg_string,'-p'))
         OUTprefix = strtrim(varargin{j}(strfind(arg_string, '-p')+2:end));
         nOUTprefixes = nOUTprefixes + 1;
-%     elseif(strfind(arg_string,'-d'))
-%         display_option = 1;
-%         temp = char(varargin{j});
-%         display_channel = fix(str2double(temp(strfind(temp,'-d')+2:end)));
-%         if(isempty(display_channel)) display_channel = 1; end
-%         nDisplayChannels = length(display_channel);
-    elseif(strfind(arg_string,'-f'))
-        filter_values = arg_string(strfind(arg_string,'-f')+2:end);
-        filter_values = str2double(filter_values);
-        if length(filter_values) ~= 2; error('Unrecognized option for -f'); end
-        lowpass_value = filter_values(1); highpass_value = filter_values(2);
-    elseif(strfind(arg_string,'-n'))
-        notchfilter_option = 1;
     elseif(strfind(arg_string,'-o'))
         o = lower(strtrim(varargin{j}(strfind(arg_string,'-o')+2:end)));
         if isempty(intersect(o, output_opts))
             error('Unrecognized argument ''%s'' for -o', o); 
         end
         output.(o) = 1;
+    elseif strfind(arg_string, '-r')
+        refchannel = strtrim(arg_string(strfind(arg_string,'-r')+2:end));
+        if isempty(refchannel), refchannel = 'all'; end
+    elseif strfind(arg_string,'-f')
+        filter_values = arg_string(strfind(arg_string,'-f')+2:end);
+        filter_values = str2double(filter_values);
+        if length(filter_values) ~= 2; error('Unrecognized option for -f'); end
+        lowpass_value = filter_values(1); highpass_value = filter_values(2);
+    elseif(strfind(arg_string,'-n'))
+        notchfilter_option = 1;
+%     elseif(strfind(arg_string,'-d'))
+%         display_option = 1;
+%         temp = char(varargin{j});
+%         display_channel = fix(str2double(temp(strfind(temp,'-d')+2:end)));
+%         if(isempty(display_channel)) display_channel = 1; end
+%         nDisplayChannels = length(display_channel);
     % Legacy options for MIP files
     elseif(strfind(arg_string,'-c'))
         temp = arg_string;
@@ -86,7 +92,6 @@ for j = 1:length(varargin)
         load_args{end+1} = 'conversion';
         load_args{end+1} = conversion_factor;
         clear temp conversion_factor;
-    % TODO: do i want anyone to have a montage file?
     elseif(strfind(arg_string,'.mon'))
         load_args{end+1} = 'labels_file';
         load_args{end+1} = varargin{j};
@@ -168,12 +173,12 @@ end
 %%==============================================================================
 
 if(exist('pop_importdata.m','file') ~= 2)
-    if(exist('/usr/local/packages/MATLABPackages/eeglab/functions/popfunc','dir') == 7)
+    if(exist([basepath '/eeglab/functions/popfunc'],'dir') == 7)
         fprintf(fidLOG, '\nLoading required EEGLab functions\n');
-        addpath('/usr/local/packages/MATLABPackages/eeglab/functions/guifunc');
-        addpath('/usr/local/packages/MATLABPackages/eeglab/functions/popfunc');
-        addpath('/usr/local/packages/MATLABPackages/eeglab/functions/adminfunc');
-        addpath('/usr/local/packages/MATLABPackages/eeglab/functions/sigprocfunc');
+        addpath([basepath '/eeglab/functions/guifunc']);
+        addpath([basepath '/eeglab/functions/popfunc']);
+        addpath([basepath '/eeglab/functions/adminfunc']);
+        addpath([basepath '/eeglab/functions/sigprocfunc']);
     else
         fprintf(fidLOG, '\nRequired eeglab functions cannot be found - check you paths!\n');
         fclose('all');
@@ -231,16 +236,23 @@ ALLEEG = map_codes_and_labels(ALLEEG, ALLcodes, ALLlabels, fidLOG);
 
 
 %%==============================================================================
-%%                      Merge data, fix channel labels, and save continuous data
+%%                      Merge data, setup channel info, and save continuous data
 %%==============================================================================
 
 
 % Merge data together
-if nEEGfiles > 1, EEG = pop_mergeset(ALLEEG, 1:nEEGfiles); 
-else EEG = ALLEEG{1}; end
+fprintf(fidLOG, '\nMerging data together\n');
+if nEEGfiles > 1, 
+    EEG = pop_mergeset(ALLEEG, 1:nEEGfiles);
+    EEG.eventcodes = [ALLEEG.eventcodes];
+    EEG.eventlabels = [ALLEEG.eventlabels];
+else
+    EEG = ALLEEG(1); 
+end
 clear ALLEEG;
 
 % Ghetto fix of channel labels for cnt files
+fprintf(fidLOG, '\nFixing channel labels\n');
 old_vals = {'CB1', 'CB2', 'HEO', 'VEO'};
 new_vals = {'I1', 'I2', 'HEOG', 'VEOG'};
 for i=1:length(old_vals)
@@ -248,12 +260,19 @@ for i=1:length(old_vals)
     if any(search); EEG.chanlocs(search).labels = new_vals{i}; end
 end
 
+% Get channel locations
+fprintf(fidLOG, '\nLooking up standard channel locations\n');
+chanfile = [basepath '/eeglab/plugins/dipfit2.2/standard_BESA/standard-10-5-cap385.elp'];
+EEG = pop_chanedit(EEG, 'lookup', chanfile);
+
 % Save the EEGLab continuous file (will be removed later if user-specified)
+fprintf(fidLOG, '\nSaving continuous EEGLab file\n');
 check_output_file(EEGLABcontinuousfile, fidLOG);
 pop_saveset(EEG, 'filename', EEGLABcontinuousfile);
 
 % Save the fieldtrip continuous file
 if output.continuous_fieldtrip
+    fprintf(fidLOG, '\nSaving continuous fieldtrip file\n');
     check_output_file(FIELDTRIPcontinuousfile, fidLOG);
     data            = eeglab2fieldtrip(EEG, 'preprocessing');
     data.hdr        = ft_read_header(EEGLABcontinuousfile);
@@ -280,6 +299,10 @@ cfg = ft_definetrial(cfg);
 % Preprocessing & Creating Epochs
 cfg.demean = 'yes';
 cfg.baseline = baseline;
+if refchannel
+    cfg.reref       = 'yes';
+    cfg.refchannel  = refchannel;
+end
 if lowpass_value && highpass_value
     cfg.bpfilter    = 'yes';
     cfg.bpfreq      = [lowpass_value highpass_value];
@@ -292,8 +315,10 @@ elseif highpass_value
 end
 if notchfilter_option
     cfg.dftfilter   = 'yes';
-    % TODO: What should line filtering be? [50, 100, 150] or [60, 120, 180]
-    cfg.dftfreq     = 60;
+    cfg.dftfreq     = [60, 120, 180];
+end
+if lowpass_value || highpass_value || notchfilter_option
+    cfg.padding     = 0.1;
 end
 data = ft_preprocessing(cfg);
 
@@ -302,6 +327,7 @@ if ~output.continuous_eeglab
     fprintf(fidLOG, '\nRemoving continuous set file\n');
     [pathstr name] = fileparts(EEGLABcontinuousfile);
     delete(EEGLABcontinuousfile);
+    if isempty(pathstr), pathstr = '.'; end
     delete([pathstr filesep name '.fdt']);
 end
 
@@ -363,8 +389,10 @@ for i=1:length(ar_settings)
             cfg.artfctdef.eog.bpfilttype        = 'fir';
             cfg.artfctdef.eog.hilbert           = 'yes';
             cfg.artfctdef.eog.interactive       = 'no';
-            cfg.artfctdef.eog.trlpadding        = -0.1; % Padding added for each trial in 
-                                                        %   checking for an artifact.
+            if  (-1*epoch(1) - ar_settings(i).prestim) < 0.1 || (ar_settings(i).poststim - epoch(2)) < 0.1
+                cfg.artfctdef.eog.trlpadding    = -0.1; % Padding added for each trial in 
+                                                        %   checking for an artifact.                
+            end
             cfg.artfctdef.eog.fltpadding        = 0.1;  % Padding added before filtering
                                                         %   and removed after filtering.
             cfg.artfctdef.eog.artpadding        = 0.1;  % Padding added around period of time
@@ -426,10 +454,10 @@ for i=1:ncodes
     
     
     %% Fieldtrip
+    % Select trials with unique event code
+    trials = data.cfg.trl(:,4) == code;
+    tdata = ft_selectdata(data, 'rpt', trials);
     if output.fieldtrip
-        % Select trials with unique event code and then save
-        trials = data.cfg.trl(:,4) == code;
-        tdata = ft_selectdata(data, 'rpt', trials);
         save([FIELDTRIPprefix '_' label '.mat'], 'tdata');
     end
     
@@ -484,12 +512,11 @@ if output.eegad
     fprintf(fidLOG, 'Creating AVG HDR file: %s\n', HDRfile);
     check_output_file(HDRfile, fidLOG);
     fidHDR = fopen(HDRfile, 'w');
-
-    % TODO: WHAT TO DO ABOUT THE EXPERIMENT NAME AND DATE
+    
     % Line 1: expName is the experiment name
-    fprintf(fidHDR,'%s\n', 'default'); 
+    fprintf(fidHDR,'%s\n', OUTprefix); 
     % Line 2: expDate is the experiment date string
-    fprintf(fidHDR,'%s\n', now);
+    fprintf(fidHDR,'%s\n', datestr(now, 'dd-mmm-yyyy HH:MM:SS'));
     % Line 3: nChannels is the number of data channels (electrodes).
     fprintf(fidHDR,'%d\n', nchans+1);
     % Line 4: nPoints is the number of data points collected per channel.
