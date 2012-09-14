@@ -12,26 +12,48 @@ function [trl, event] = mip_trialfun(cfg)
 hdr   = ft_read_header(cfg.dataset);
 event = ft_read_event(cfg.dataset);
 
-%% event values from eeglab will be string
-if isnumeric(cfg.trialdef.eventvalue)
-    cfg.trialdef.eventvalue = num2strcell(cfg.trialdef.eventvalue);    
+%% check and match event value types
+typechar = 0; typenum = 0;
+if ischar([event.value])
+    typechar = 1;
+    if isnumeric(cfg.trialdef.eventvalue)
+        cfg.trialdef.eventvalue = num2strcell(cfg.trialdef.eventvalue);
+    end
+elseif isnumeric([event.value])
+    typenum = 1;
+    if ischar(cfg.trialdef.eventvalue)
+        cfg.trialdef.eventvalue = cellfun(@(c) str2double(c), cfg.trialdef.eventvalue);
+    end
+else
+    fprintf('\nUnknown type for event.value\n');
+    error('Program cannot proceed');
 end
+
 
 %% search for "trigger" events & for specic event values
 inds        = strcmp('trigger', {event.type});
-inds(inds)  = cellfun(@(c) ~isempty(intersect(c, cfg.trialdef.eventvalue)), {event(inds).value});
-codes       = cellfun(@str2num, {event(inds).value});
+if typechar
+    inds(inds)  = cellfun(@(c) ~isempty(intersect(c, cfg.trialdef.eventvalue)), {event(inds).value});
+    codes       = cellfun(@str2num, {event(inds).value});
+elseif typenum
+    inds(inds)  = arrayfun(@(c) ~isempty(intersect(c, cfg.trialdef.eventvalue)), [event(inds).value]);
+    codes       = [event(inds).value];
+end
 samples     = [event(inds).sample];
+
 
 %% determine the number of samples before and after the trigger
 pretrig  = -round(cfg.trialdef.prestim  * hdr.Fs);
 posttrig =  round(cfg.trialdef.poststim * hdr.Fs);
 
+
 %% indicate if event is a trial
 [event(~inds).intrl] = deal(0); [event(inds).intrl] = deal(1);
 
+
 %% begin latency; end latency; offset (from 0); event code
 trl = [samples + pretrig; samples + posttrig; repmat(pretrig, 1, sum(inds)); codes]';
+
 
 %% function
 function c = num2strcell(n, format)
