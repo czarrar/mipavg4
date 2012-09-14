@@ -41,6 +41,11 @@ for i=1:n
     codes = ALLcodes{i};
     labels = ALLlabels{i};
     
+    if size(codes,1) ~= size(labels,1)
+       fprintf(fidLOG, '\nSize mismatch between codes and labels\n');
+       error('Program cannot proceed');
+    end
+    
     for j=1:size(codes, 1)
         % Find input codes in EEGLab event data structure
         search = [EEG.event.type] == codes(j,1); 
@@ -51,6 +56,12 @@ for i=1:n
         else
             fprintf(fidLOG, '\tCould not find code %i (label %s)\n', codes(j,1), labels{j,1});
         end
+    end
+    
+    % Were there any codes found?
+    if ~isfield(EEG.event, 'label')
+        fprintf(fidLOG, '\nNo usuable event codes found for file/run #%d\n', i);
+        error('Program cannot proceed');        
     end
     
     % Save unique codes and corresponding labels
